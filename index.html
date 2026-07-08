@@ -190,7 +190,6 @@ you can walk. Paste anything — npub, hex, or <code>did:nostr:…</code></p>
   }
 
   canvas.onclick = (e) => {
-    window.__lastClick = { cx: e.clientX, cy: e.clientY }
     const rect = canvas.getBoundingClientRect()
     const x = (e.clientX - rect.left) * (canvas.width / rect.width)
     const y = (e.clientY - rect.top) * (canvas.height / rect.height)
