@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='40' fill='none' stroke='%237c3aed' stroke-width='9'/><circle cx='50' cy='50' r='12' fill='%237c3aed'/></svg>">
+<meta property="og:title" content="did:nostr explorer">
+<meta property="og:description" content="Whois for nostr: any npub resolves to a W3C DID, a profile, a bitcoin address, and a browsable social graph.">
+<meta property="og:url" content="https://nostr-client.github.io/did-nostr/">
+<meta property="og:image" content="https://nostr-client.github.io/did-nostr/og.png">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="nostr-client">
+<meta name="twitter:card" content="summary_large_image">
+<title>did:nostr explorer — whois for nostr</title>
+<link rel="stylesheet" href="https://nostr-client.github.io/theme/theme.css">
+<style>
+  body { max-width: 46rem; margin: 0 auto; padding: 2rem 1.2rem 4rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 .2rem; }
+  h1 .accent { color: var(--nc-accent); }
+  .lede { color: var(--nc-soft); margin: 0 0 1.2rem; font-size: .95rem; }
+  input.q { font: inherit; width: 100%; padding: .65em .9em; border-radius: 12px;
+    box-sizing: border-box; border: 1.5px solid var(--nc-line); background: var(--nc-surface);
+    color: inherit; font-family: var(--nc-mono); font-size: .85rem; }
+  input.q:focus { outline: none; border-color: var(--nc-accent); }
+  .grid { display: grid; gap: 1rem; margin-top: 1.2rem; }
+  .card { background: var(--nc-surface); border: 1px solid var(--nc-line);
+    border-radius: var(--nc-radius); box-shadow: var(--nc-shadow); padding: 1rem 1.1rem; }
+  .card h2 { font-size: .78rem; text-transform: uppercase; letter-spacing: .07em;
+    color: var(--nc-soft); margin: 0 0 .6rem; }
+  pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: .74rem;
+    max-height: 20rem; overflow-y: auto; }
+  .kv { display: grid; gap: .4rem; font-size: .85rem; }
+  .kv div { display: flex; gap: .6rem; }
+  .kv b { flex: none; width: 7.5rem; color: var(--nc-soft); font-weight: 600; }
+  .kv code { overflow-wrap: anywhere; }
+  canvas { width: 100%; display: block; border-radius: 10px; background: var(--nc-bg);
+    cursor: pointer; }
+  .hint { font-size: .78rem; color: var(--nc-faint); margin-top: .5rem; }
+  .status { color: var(--nc-faint); font-size: .85rem; margin-top: .8rem; }
+</style>
+</head>
+<body>
+<h1><span class="accent">◉</span> did:nostr explorer</h1>
+<p class="lede">Whois for nostr. One keypair resolves to a <strong>W3C DID</strong>,
+a <strong>profile</strong>, a <strong>bitcoin address</strong>, and a social graph
+you can walk. Paste anything — npub, hex, or <code>did:nostr:…</code></p>
+
+<input class="q" id="q" spellcheck="false"
+  value="82341f882b6eabcd2ba7f1ef90aad961cf074af15b9ef44a09f9d2a8fbfbe6a2">
+<div class="status" id="status"></div>
+
+<div class="grid">
+  <nostr-profile id="card"></nostr-profile>
+
+  <div class="card">
+    <h2>Identity</h2>
+    <div class="kv" id="kv"></div>
+  </div>
+
+  <div class="card">
+    <h2>Social graph — click a node to walk</h2>
+    <canvas id="graph" width="900" height="560"></canvas>
+    <div class="hint" id="ghint">center = this identity · ring = who they follow</div>
+  </div>
+
+  <div class="card">
+    <h2>DID document (live-resolved from relays)</h2>
+    <pre id="doc"></pre>
+  </div>
+</div>
+
+<script type="module">
+  import { resolve, didFromPubkey } from 'https://nostr-client.github.io/did/did.js'
+  import { decode, npubEncode, npubShort } from 'https://nostr-client.github.io/nip19/nip19.js'
+  import { defaultPool } from 'https://nostr-client.github.io/pool/pool.js'
+  import { profiles } from 'https://nostr-client.github.io/note/note.js'
+  import { nostrAddress } from 'https://nostr-client.github.io/wallet/wallet.js'
+  import 'https://nostr-client.github.io/profile/profile.js'
+  import 'https://nostr-client.github.io/contacts/contacts.js'
+
+  const $ = (id) => document.getElementById(id)
+  const HEX = /^[0-9a-f]{64}$/
+  let seq = 0
+
+  function parseInput(raw) {
+    raw = raw.trim()
+    if (raw.startsWith('did:nostr:')) raw = raw.slice(10)
+    return decode(raw).hex
+  }
+
+  async function explore(pubkey, { push = true } = {}) {
+    const my = ++seq
+    if (push) history.pushState({}, '', '#' + pubkey)
+    $('q').value = pubkey
+    $('status').textContent = 'resolving ' + didFromPubkey(pubkey).slice(0, 40) + '…'
+    $('card').setAttribute('pubkey', pubkey)
+    $('kv').innerHTML = ''
+    $('doc').textContent = ''
+
+    // identity facts
+    const kv = (label, value, mono = true) => {
+      const row = document.createElement('div')
+      const b = document.createElement('b')
+      b.textContent = label
+      const v = document.createElement(mono ? 'code' : 'span')
+      v.textContent = value
+      row.append(b, v)
+      $('kv').append(row)
+    }
+    kv('did', didFromPubkey(pubkey))
+    kv('npub', npubEncode(pubkey))
+    kv('hex', pubkey)
+    nostrAddress(pubkey, 'testnet4').then((addr) => { if (my === seq) kv('bitcoin (tb4)', addr) })
+    nostrAddress(pubkey, 'mainnet').then((addr) => { if (my === seq) kv('bitcoin (main)', addr) })
+
+    // DID document
+    resolve(pubkey, { pool: defaultPool(), wellKnown: false }).then(({ document: doc, source }) => {
+      if (my !== seq) return
+      $('doc').textContent = JSON.stringify(doc, null, 2)
+      $('status').textContent = 'resolved · source: ' + source
+    })
+
+    // graph
+    drawGraph(pubkey, my)
+  }
+
+  // ---------------- social graph: center + follow ring, clickable ----------------
+  const canvas = $('graph')
+  const ctx = canvas.getContext('2d')
+  let nodes = []
+
+  function hueOf(pk) { return parseInt(pk.slice(0, 4), 16) % 360 }
+
+  async function drawGraph(center, my) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    nodes = []
+    const contacts = await defaultPool().get({ kinds: [3], authors: [center] })
+    if (my !== seq) return
+    const follows = [...new Set((contacts?.tags ?? [])
+      .filter((t) => t[0] === 'p' && HEX.test(t[1] ?? '')).map((t) => t[1]))].slice(0, 36)
+    $('ghint').textContent = follows.length
+      ? `center = this identity · ring = ${follows.length} follows (of ${new Set((contacts?.tags ?? []).filter((t) => t[0] === 'p').map((t) => t[1])).size}) · click to walk`
+      : 'no follow list found for this identity'
+
+    const W = canvas.width, H = canvas.height
+    const cx = W / 2, cy = H / 2
+    const R = Math.min(W, H) / 2 - 70
+
+    const all = [{ pk: center, x: cx, y: cy, r: 34, center: true }]
+    follows.forEach((pk, i) => {
+      const a = (i / follows.length) * Math.PI * 2 - Math.PI / 2
+      all.push({ pk, x: cx + R * Math.cos(a), y: cy + R * Math.sin(a), r: 17 })
+    })
+    nodes = all
+
+    function paintNode(n, name) {
+      const hue = hueOf(n.pk)
+      // edge
+      if (!n.center) {
+        ctx.strokeStyle = `hsl(${hue} 40% 80%)`
+        ctx.lineWidth = 1
+        ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(n.x, n.y); ctx.stroke()
+      }
+      const g = ctx.createLinearGradient(n.x - n.r, n.y - n.r, n.x + n.r, n.y + n.r)
+      g.addColorStop(0, `hsl(${hue} 62% 60%)`)
+      g.addColorStop(1, `hsl(${(hue + 55) % 360} 62% 44%)`)
+      ctx.fillStyle = g
+      ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2); ctx.fill()
+      ctx.fillStyle = '#fff'
+      ctx.font = `700 ${n.r}px system-ui`
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+      ctx.fillText((name?.[0] ?? '·').toUpperCase(), n.x, n.y + 1)
+      if (name) {
+        ctx.fillStyle = getComputedStyle(document.body).color
+        ctx.font = '11px system-ui'
+        ctx.fillText(name.slice(0, 14), n.x, n.y + n.r + 12)
+      }
+    }
+
+    // edges first, then nodes over them
+    for (const n of all) paintNode(n)
+    for (const n of all) {
+      profiles().get(n.pk, (p) => {
+        if (my !== seq) return
+        const name = p?.display_name || p?.name || npubShort(n.pk).slice(0, 10)
+        paintNode(n, name)
+      })
+    }
+  }
+
+  canvas.onclick = (e) => {
+    const rect = canvas.getBoundingClientRect()
+    const x = (e.clientX - rect.left) * (canvas.width / rect.width)
+    const y = (e.clientY - rect.top) * (canvas.height / rect.height)
+    for (const n of nodes) {
+      if (!n.center && Math.hypot(n.x - x, n.y - y) < n.r + 6) { explore(n.pk); return }
+    }
+  }
+
+  // profile card clicks walk the graph too
+  document.addEventListener('nostr:profile-click', (e) => { e.preventDefault(); explore(e.detail.pubkey) })
+
+  $('q').onchange = () => {
+    try { explore(parseInput($('q').value)) } catch { $('status').textContent = '✗ not a key I understand' }
+  }
+  addEventListener('popstate', () => {
+    const h = location.hash.slice(1)
+    if (HEX.test(h)) explore(h, { push: false })
+  })
+
+  const initial = location.hash.slice(1)
+  explore(HEX.test(initial) ? initial : parseInput($('q').value), { push: false })
+</script>
+</body>
+</html>
