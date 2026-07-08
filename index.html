@@ -152,6 +152,7 @@ you can walk. Paste anything — npub, hex, or <code>did:nostr:…</code></p>
       all.push({ pk, x: cx + R * Math.cos(a), y: cy + R * Math.sin(a), r: 17 })
     })
     nodes = all
+    window.__nodes = nodes
 
     function paintNode(n, name) {
       const hue = hueOf(n.pk)
@@ -189,6 +190,7 @@ you can walk. Paste anything — npub, hex, or <code>did:nostr:…</code></p>
   }
 
   canvas.onclick = (e) => {
+    window.__lastClick = { cx: e.clientX, cy: e.clientY }
     const rect = canvas.getBoundingClientRect()
     const x = (e.clientX - rect.left) * (canvas.width / rect.width)
     const y = (e.clientY - rect.top) * (canvas.height / rect.height)
